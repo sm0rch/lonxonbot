@@ -1,103 +1,133 @@
 """
-strategies/base.py — HỢP ĐỒNG KỸ THUẬT
-========================================
-File này định nghĩa cấu trúc dữ liệu và chữ ký hàm mà
-NHÓM NGHIÊN CỨU phải tuân theo khi viết chiến lược.
-
-⚠️  QUY TẮC BẮT BUỘC:
-- KHÔNG được đổi tên class Signal
-- KHÔNG được đổi tên hoặc kiểu tham số của generate_signal()
-- CHỈ được thay đổi code BÊN TRONG hàm generate_signal()
+strategies/base.py — HỢP ĐỒNG DỮ LIỆU (Theo Spec v1.1 Mục 9)
+===========================================================
+Định nghĩa cấu trúc dữ liệu mà hàm generate_signal() trả về.
+Nhóm Nghiên cứu phải tuân thủ nghiêm ngặt cấu trúc này.
 """
 
-from dataclasses import dataclass
-from typing import Optional
+from dataclasses import dataclass, field
+from typing import List, Optional, Dict
 import pandas as pd
 
 
+@dataclass
+class PriceData:
+    current: float; change: float; change_pct: float
+    open: float; high: float; low: float
+    ref: float; ceiling: float; floor: float
+    volume: int; value: int
+
+@dataclass
+class TechnicalData:
+    ema20: float; ema50: float; ema200: float
+    rsi14: float; macd: float; macd_signal: float
+    adx: float; atr14: float
+    volume_ratio_20: float
+    trend: str             # UPTREND | DOWNTREND | SIDEWAYS
+    trend_strength: str    # WEAK | MODERATE | STRONG
+
+@dataclass
+class FundamentalData:
+    quarter: str           # Ví dụ: "Q2/2026"
+    pe: float; pb: float; eps: float
+    roe: float; roa: float
+    revenue_growth_yoy: float; profit_growth_yoy: float
+    debt_to_equity: float
+    market_cap: int
+    sector_pe: float; sector_pb: float
+
+@dataclass
+class PriceLevel:
+    price: float
+    label: str
+
+@dataclass
+class SignalDetail:
+    action: str            # BUY | SELL | HOLD | WATCH
+    triggered_at: str      # ISO format
+    score: float           # Thang điểm (ví dụ 8.2)
+    rank: int              # Hạng trong rổ
+    conditions_passed: List[str]
+    explanation: str       # Đoạn văn xuôi do nhóm NC build
+    target: float
+    stoploss: float
+    rr_ratio: float
+    model_weight_pct: float
+
+@dataclass
+class TradeRecord:
+    buy_date: str; buy_price: float
+    sell_date: str; sell_price: float
+    return_pct: float; holding_days: int
+
+@dataclass
+class OpenTrade:
+    buy_date: str; buy_price: float
+
+@dataclass
+class History90d:
+    closed_trades: List[TradeRecord]
+    open_trade: Optional[OpenTrade]
+    buy_count: int; sell_count: int
+    win_rate: float; avg_return: float
+    cumulative_return: float; avg_holding_days: int
+
+@dataclass
+class StockDataResult:
+    """Object tổng hợp cuối cùng trả về cho Bot (Luồng B) hoặc Engine (Luồng A)"""
+    ticker: str
+    company_name: str
+    exchange: str          # HOSE | HNX | UPCOM
+    sector: str
+    data_source: str
+    is_stale: bool
+    
+    market_updated_at: str
+    technical_updated_at: str
+    fundamental_asof: str
+    fundamental_published_at: str
+    
+    price: PriceData
+    technical: TechnicalData
+    fundamental: FundamentalData
+    levels: Dict[str, List[PriceLevel]]  # {"resistance": [...], "support": [...]}
+    signal: SignalDetail
+    history_90d: History90d
+
+
 # ══════════════════════════════════════════════════════════
-#  Signal — Kết quả trả về của mỗi tín hiệu
+# Hàm xử lý cấp Thị Trường (Market Context)
 # ══════════════════════════════════════════════════════════
 
 @dataclass
-class Signal:
-    """
-    Đại diện cho một tín hiệu MUA hoặc BÁN.
+class SectorChange:
+    name: str; change_pct: float
 
-    Ví dụ:
-        Signal(
-            ticker     = "VCB",
-            action     = "BUY",
-            price      = 59900.0,
-            time       = "2026-09-19 14:30",
-            reason     = "EMA20 cắt lên EMA50, RSI > 50",
-            confidence = 0.85
-        )
-    """
-    ticker:     str    # Mã cổ phiếu, ví dụ: "VCB", "HPG", "FPT"
-    action:     str    # Chỉ được là "BUY" hoặc "SELL"
-    price:      float  # Giá tại thời điểm phát tín hiệu (VND)
-    time:       str    # Thời gian, định dạng "YYYY-MM-DD HH:MM"
-    reason:     str    # Giải thích ngắn gọn tại sao BUY/SELL
-    confidence: float  # Độ tin cậy từ 0.0 (thấp) đến 1.0 (cao)
-
-    def __post_init__(self):
-        """Kiểm tra dữ liệu hợp lệ khi tạo Signal."""
-        if self.action not in ("BUY", "SELL"):
-            raise ValueError(f"action phải là 'BUY' hoặc 'SELL', nhận được: '{self.action}'")
-        if not (0.0 <= self.confidence <= 1.0):
-            raise ValueError(f"confidence phải từ 0.0 đến 1.0, nhận được: {self.confidence}")
+@dataclass
+class MarketContext:
+    vnindex: Dict[str, float]  # {"value": 1284.56, "change": 8.42, "change_pct": 0.66}
+    liquidity_value: int
+    breadth: Dict[str, int]    # {"advancing": 312, "declining": 145, "unchanged": 88}
+    money_flow: str            # INFLOW | OUTFLOW | NEUTRAL
+    foreign_net_value: int     # Dương = mua ròng, Âm = bán ròng
+    leading_sectors: List[SectorChange]
+    lagging_sectors: List[SectorChange]
+    market_updated_at: str
 
 
 # ══════════════════════════════════════════════════════════
-#  generate_signal() — Hàm nhóm nghiên cứu phải implement
+# Giao diện cho Nhóm Nghiên Cứu
 # ══════════════════════════════════════════════════════════
 
-def generate_signal(df: pd.DataFrame, fundamentals: dict) -> Optional[Signal]:
+def analyze_stock(ticker: str, df_ohlcv: pd.DataFrame, fundamentals: dict) -> StockDataResult:
     """
-    Phân tích dữ liệu và trả về tín hiệu MUA/BÁN nếu có.
-
-    ┌─────────────────────────────────────────────────────┐
-    │  NHÓM NGHIÊN CỨU: Viết chiến lược của mình vào ĐÂY │
-    └─────────────────────────────────────────────────────┘
-
-    Tham số:
-        df (pd.DataFrame): Bảng dữ liệu OHLCV đã chuẩn hóa.
-            Cột: [open, high, low, close, volume]
-            Index: date (datetime)
-            Ví dụ:
-                            open     high      low    close    volume
-                date
-                2026-09-17  59000  60000.0  58800.0  59600.0   5395900
-                2026-09-18  60000  61000.0  59800.0  59900.0  10362600
-
-        fundamentals (dict): Dữ liệu tài chính cơ bản của mã cổ phiếu.
-            Các key thường dùng:
-                "roe"       → ROE (Return on Equity), ví dụ: 0.18 = 18%
-                "pe"        → P/E ratio, ví dụ: 12.5
-                "pb"        → P/B ratio, ví dụ: 1.8
-                "eps"       → EPS (VND), ví dụ: 5200
-                "revenue_growth" → Tăng trưởng doanh thu, ví dụ: 0.15 = 15%
-            Nếu không có dữ liệu cơ bản, dict này sẽ rỗng: {}
-
-    Trả về:
-        Signal  → nếu phát hiện tín hiệu MUA hoặc BÁN
-        None    → nếu không có tín hiệu (giữ nguyên, không làm gì)
-
-    ⚠️  QUAN TRỌNG — Tránh Look-ahead Bias:
-        ĐÚNG  ✅: Dùng df['close'].iloc[-2]  (nến đã đóng cửa)
-        SAI   ❌: Dùng df['close'].iloc[-1]  (nến hiện tại chưa đóng)
+    Hàm phân tích 1 mã cổ phiếu, trả về đầy đủ data theo format Spec Mục 9.
+    Nhóm NC viết logic bên trong hàm này.
     """
+    raise NotImplementedError("Nhóm NC cần implement hàm analyze_stock")
 
-    # ──────────────────────────────────────────────────────
-    # NHÓM NGHIÊN CỨU VIẾT CODE TỪ ĐÂY XUỐNG
-    # ──────────────────────────────────────────────────────
-
-    # Hiện tại để trống — nhóm nghiên cứu sẽ điền vào
-    # Xem file strategies/mock.py để hiểu ví dụ
-
-    raise NotImplementedError(
-        "Nhóm nghiên cứu chưa implement chiến lược.\n"
-        "Hãy xem strategies/mock.py để hiểu cách viết,\n"
-        "sau đó thay thế hàm này bằng chiến lược thật."
-    )
+def analyze_market(market_data: dict) -> MarketContext:
+    """
+    Hàm phân tích trạng thái toàn thị trường, gọi 1 lần mỗi vòng quét.
+    """
+    raise NotImplementedError("Nhóm NC cần implement hàm analyze_market")

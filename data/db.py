@@ -17,49 +17,51 @@ def _get_connection():
     return sqlite3.connect(DB_PATH)
 
 
-def save(symbol: str, df: pd.DataFrame) -> None:
+def save(symbol: str, df: pd.DataFrame, table_type: str = "daily") -> None:
     """
-    Lưu DataFrame OHLCV của 1 mã vào SQLite.
-    Nếu đã có dữ liệu cũ → ghi đè (upsert).
+    Lưu DataFrame OHLCV vào SQLite.
 
     Args:
-        symbol: Mã cổ phiếu, ví dụ "VCB"
-        df:     DataFrame với cột [open, high, low, close, volume]
+        symbol:     Mã cổ phiếu, ví dụ "VCB"
+        df:         DataFrame với cột [open, high, low, close, volume]
+        table_type: "daily"        → nến ngày (backtest)
+                    "intraday_5m"  → nến 5 phút (live)
+                    "intraday_15m" → nến 15 phút
     """
     if df.empty:
         return
 
     df = df.copy()
-    df.index = df.index.astype(str)   # Chuyển datetime index thành string
+    df.index = df.index.astype(str)
     df["symbol"] = symbol.upper()
 
+    table_name = f"ohlcv_{symbol.upper()}_{table_type}"
+
     with _get_connection() as conn:
-        # Lưu vào bảng tên theo mã cổ phiếu
         df.to_sql(
-            name=f"ohlcv_{symbol.upper()}",
+            name=table_name,
             con=conn,
-            if_exists="replace",      # Ghi đè nếu đã có
+            if_exists="replace",
             index=True,
             index_label="date",
         )
 
 
-def load(symbol: str, days: int = 60) -> pd.DataFrame:
+def load(symbol: str, days: int = 60, table_type: str = "daily") -> pd.DataFrame:
     """
-    Đọc dữ liệu OHLCV của 1 mã từ SQLite.
+    Đọc dữ liệu OHLCV từ SQLite.
 
     Args:
-        symbol: Mã cổ phiếu, ví dụ "VCB"
-        days:   Số ngày muốn lấy (tính từ ngày mới nhất)
+        symbol:     Mã cổ phiếu, ví dụ "VCB"
+        days:       Số dòng muốn lấy
+        table_type: "daily" / "intraday_5m" / "intraday_15m"
 
     Returns:
-        DataFrame với cột [open, high, low, close, volume]
-        hoặc DataFrame rỗng nếu chưa có dữ liệu
+        DataFrame hoặc DataFrame rỗng nếu chưa có dữ liệu
     """
-    table = f"ohlcv_{symbol.upper()}"
+    table = f"ohlcv_{symbol.upper()}_{table_type}"
 
     with _get_connection() as conn:
-        # Kiểm tra bảng có tồn tại không
         check = conn.execute(
             "SELECT name FROM sqlite_master WHERE type='table' AND name=?",
             (table,)
